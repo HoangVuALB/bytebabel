@@ -13,6 +13,7 @@ import customtkinter as ctk
 from ..config import settings
 from ..logger import get_logger
 from ..transcription.soniox import TranscriptUpdate
+from . import theme as T
 from .logs import LogPanel
 from .session_bar import SessionBar
 from .settings import SettingsDialog
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
 log = get_logger("ui.window")
 
 _TRANSCRIPTS_DIR = Path.home() / ".bytebabel" / "transcripts"
-_STATUS_BG       = ("gray84", "#08080F")
 
 
 class AppWindow(ctk.CTk):
@@ -38,8 +38,9 @@ class AppWindow(ctk.CTk):
         super().__init__()
 
         self.title("ByteBabel")
-        w = settings.get("window_width") or 1100
-        h = settings.get("window_height") or 700
+        self.configure(fg_color=T.BG_ROOT)
+        w = settings.get("window_width") or 1200
+        h = settings.get("window_height") or 800
         self.geometry(f"{w}x{h}")
         self.minsize(720, 500)
 
@@ -61,9 +62,9 @@ class AppWindow(ctk.CTk):
 
     def _build_ui(self) -> None:
         # Grid: col 0 = sidebar (hidden by default), col 1 = main content
-        self.grid_rowconfigure(2, weight=1)   # viewer row expands
-        self.grid_columnconfigure(0, minsize=0, weight=0)   # sidebar
-        self.grid_columnconfigure(1, weight=1)               # content
+        self.grid_rowconfigure(2, weight=1)  # viewer row expands
+        self.grid_columnconfigure(0, minsize=0, weight=0)  # sidebar
+        self.grid_columnconfigure(1, weight=1)  # content
 
         # ── Toolbar ──────────────────────────────────────────────────────
         self._toolbar = Toolbar(
@@ -90,11 +91,13 @@ class AppWindow(ctk.CTk):
 
         # ── Transcript viewer ─────────────────────────────────────────────
         self._viewer = TranscriptView(self)
-        self._viewer.grid(row=2, column=1, sticky="nsew", padx=(0, 8), pady=(6, 0))
+        self._viewer.grid(
+            row=2, column=1, sticky="nsew", padx=(0, T.PAD_SM), pady=(2, 0)
+        )
 
         # ── Status bar ────────────────────────────────────────────────────
         status_bar = ctk.CTkFrame(
-            self, fg_color=_STATUS_BG, height=26, corner_radius=0
+            self, fg_color=T.BG_OVERLAY, height=26, corner_radius=0
         )
         status_bar.grid(row=3, column=0, columnspan=2, sticky="ew")
 
@@ -102,37 +105,40 @@ class AppWindow(ctk.CTk):
         ctk.CTkLabel(
             status_bar,
             textvariable=self._status_var,
-            font=ctk.CTkFont(size=11),
-            text_color=("gray50", "gray55"),
-        ).pack(side="left", padx=10)
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=11),
+            text_color=T.TEXT_SECONDARY,
+        ).pack(side="left", padx=T.PAD_MD)
 
         self._save_var = ctk.StringVar(value="")
         ctk.CTkLabel(
             status_bar,
             textvariable=self._save_var,
-            font=ctk.CTkFont(size=11),
-            text_color=("gray50", "#56C26E"),
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=11),
+            text_color=T.SUCCESS,
         ).pack(side="left", padx=0)
 
         self._log_toggle_btn = ctk.CTkButton(
-            status_bar, text="Logs ▼",
-            width=70, height=20,
-            font=ctk.CTkFont(size=11),
+            status_bar,
+            text="Logs ▼",
+            width=60,
+            height=20,
+            corner_radius=T.RADIUS_SM,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=10),
             fg_color="transparent",
-            hover_color=("gray75", "gray30"),
-            text_color=("gray40", "gray60"),
+            hover_color=T.BORDER_SUBTLE,
+            text_color=T.TEXT_SECONDARY,
             command=self._toggle_logs,
         )
-        self._log_toggle_btn.pack(side="right", padx=6, pady=2)
+        self._log_toggle_btn.pack(side="right", padx=T.PAD_SM, pady=2)
 
         # ── Log panel (hidden by default) ─────────────────────────────────
-        self._log_panel = LogPanel(self, fg_color=("gray88", "#07070E"))
+        self._log_panel = LogPanel(self, fg_color=T.BG_OVERLAY)
 
     def _bind_shortcuts(self) -> None:
         mod = "Command" if sys.platform == "darwin" else "Control"
-        self.bind(f"<{mod}-r>",     lambda _e: self._shortcut_startstop())
+        self.bind(f"<{mod}-r>", lambda _e: self._shortcut_startstop())
         self.bind(f"<{mod}-comma>", lambda _e: self._open_settings())
-        self.bind(f"<{mod}-b>",     lambda _e: self._toggle_history())
+        self.bind(f"<{mod}-b>", lambda _e: self._toggle_history())
 
     # ── App orchestration hooks ───────────────────────────────────────────
 
@@ -144,7 +150,7 @@ class AppWindow(ctk.CTk):
         self._viewer.set_live_mode()
         self._set_status("Connecting…")
         self._save_var.set("")
-        self.title("● ByteBabel")
+        self.title("ByteBabel")
         self._toolbar.set_recording(True)
         self._session_bar.set_recording(True)
         self._sidebar.set_live(True)
@@ -220,6 +226,7 @@ class AppWindow(ctk.CTk):
             non_final_text=update.non_final_text,
             translated_final_text=update.translated_final_text,
             translated_non_final_text=update.translated_non_final_text,
+            segments=update.segments if update.segments else None,
         )
         self._set_status("● Recording…")
         self._do_autosave(update.final_text, update.translated_final_text)
@@ -248,13 +255,15 @@ class AppWindow(ctk.CTk):
     def _toggle_history(self) -> None:
         self._history_visible = not self._history_visible
         if self._history_visible:
-            self.grid_columnconfigure(0, minsize=200, weight=0)
-            self._sidebar.grid(row=2, column=0, sticky="nsew", padx=(8, 0), pady=(6, 0))
-            self._viewer.grid_configure(padx=(4, 8))
+            self.grid_columnconfigure(0, minsize=220, weight=0)
+            self._sidebar.grid(
+                row=2, column=0, sticky="nsew", padx=(T.PAD_SM, 0), pady=(T.PAD_SM, 0)
+            )
+            self._viewer.grid_configure(padx=(T.PAD_XS, T.PAD_SM))
         else:
             self._sidebar.grid_remove()
             self.grid_columnconfigure(0, minsize=0, weight=0)
-            self._viewer.grid_configure(padx=(0, 8))
+            self._viewer.grid_configure(padx=(0, T.PAD_SM))
 
     def _on_history_select(self, path: Path) -> None:
         log.info("Opening transcript: %s", path)
@@ -292,36 +301,54 @@ class AppWindow(ctk.CTk):
 
         dialog = ctk.CTkToplevel(self)
         dialog.title("Permission Required" if is_permission_error else "Error")
-        dialog.geometry("480x230" if is_permission_error else "480x200")
+        dialog.geometry("500x240" if is_permission_error else "500x210")
         dialog.resizable(False, False)
+        dialog.configure(fg_color=T.BG_ROOT)
         dialog.grab_set()
         dialog.lift()
         ctk.CTkLabel(
-            dialog, text=message,
-            wraplength=440, justify="left",
-            font=ctk.CTkFont(size=13),
-        ).pack(padx=20, pady=20, fill="both", expand=True)
+            dialog,
+            text=message,
+            wraplength=440,
+            justify="left",
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=13),
+            text_color=T.TEXT_PRIMARY,
+        ).pack(padx=T.PAD_XL, pady=T.PAD_XL, fill="both", expand=True)
 
         btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        btn_frame.pack(pady=(0, 16))
+        btn_frame.pack(pady=(0, T.PAD_XL))
 
         if is_permission_error:
+
             def _open_settings() -> None:
                 import subprocess
-                subprocess.Popen([
-                    "open",
-                    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-                ])
+
+                subprocess.Popen(
+                    [
+                        "open",
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                    ]
+                )
                 dialog.destroy()
 
             ctk.CTkButton(
-                btn_frame, text="Open Settings",
-                fg_color=("#4F46E5", "#4F46E5"),
-                hover_color=("#3730A3", "#3730A3"),
+                btn_frame,
+                text="Open Settings",
+                fg_color=T.ACCENT,
+                hover_color=T.ACCENT_HOVER,
+                text_color=T.TEXT_INVERSE,
+                corner_radius=T.RADIUS_SM,
+                font=ctk.CTkFont(family=T.FONT_FAMILY, size=13),
                 command=_open_settings,
-            ).pack(side="left", padx=(0, 8))
+            ).pack(side="left", padx=(0, T.PAD_SM))
 
-        ctk.CTkButton(btn_frame, text="OK", command=dialog.destroy).pack(side="left")
+        ctk.CTkButton(
+            btn_frame,
+            text="OK",
+            corner_radius=T.RADIUS_SM,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=13),
+            command=dialog.destroy,
+        ).pack(side="left")
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -337,6 +364,7 @@ class AppWindow(ctk.CTk):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _parse_transcript_file(text: str) -> tuple[str, str]:
     """Parse saved transcript into (original, translation) sections."""
@@ -374,6 +402,7 @@ def _set_window_icon(window: ctk.CTk) -> None:
         if not icon_path.exists():
             return
         from PIL import Image, ImageTk
+
         img = Image.open(icon_path).resize((64, 64))
         photo = ImageTk.PhotoImage(img)
         window.wm_iconphoto(True, photo)

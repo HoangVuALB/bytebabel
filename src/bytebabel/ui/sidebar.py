@@ -9,27 +9,15 @@ from typing import Callable
 import customtkinter as ctk
 
 from ..logger import get_logger
+from . import theme as T
 
 log = get_logger("ui.sidebar")
 
 _TRANSCRIPTS_DIR = Path.home() / ".bytebabel" / "transcripts"
 
-# Palette
-_PANEL_BG    = ("#E8E8EE", "#0A0A12")
-_SECTION_FG  = ("#AAAAAA", "#444455")
-_ITEM_BG     = ("#FFFFFF", "#16161E")
-_ITEM_HOV    = ("#F0F0F6", "#1E1E2A")
-_ITEM_SEL    = ("#D8EAFF", "#1A2A3A")
-_LIVE_COLOR  = "#E05050"
-_TIME_COLOR  = ("#333333", "#DDDDDD")
-_DEL_COLOR   = ("#BBBBBB", "#555566")
-
 
 class HistoryPanel(ctk.CTkFrame):
-    """
-    Left-side history panel.
-    Shows saved transcripts grouped by date, plus a LIVE indicator when recording.
-    """
+    """Left-side history panel with saved transcripts grouped by date."""
 
     def __init__(
         self,
@@ -38,7 +26,7 @@ class HistoryPanel(ctk.CTkFrame):
         on_delete: Callable[[Path], None] | None = None,
         **kwargs: object,
     ) -> None:
-        kwargs.setdefault("fg_color", _PANEL_BG)
+        kwargs.setdefault("fg_color", T.BG_INSET)
         kwargs.setdefault("corner_radius", 0)
         super().__init__(master, **kwargs)
 
@@ -58,22 +46,22 @@ class HistoryPanel(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
 
         # Header
-        header = ctk.CTkFrame(
-            self, fg_color=("gray80", "#050509"), corner_radius=0, height=36
-        )
+        header = ctk.CTkFrame(self, fg_color=T.BG_OVERLAY, corner_radius=0, height=44)
         header.grid(row=0, column=0, sticky="ew")
+        header.grid_propagate(False)
         ctk.CTkLabel(
             header,
             text="HISTORY",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=_SECTION_FG,
-        ).pack(side="left", padx=12, pady=8)
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=11, weight="bold"),
+            text_color=T.TEXT_SECONDARY,
+        ).pack(side="left", padx=T.PAD_LG, pady=T.PAD_SM)
 
         # Scrollable list
         self._scroll = ctk.CTkScrollableFrame(
             self,
             fg_color="transparent",
-            scrollbar_button_color=("gray70", "#2A2A3A"),
+            scrollbar_button_color=T.SCROLLBAR,
+            scrollbar_button_hover_color=T.SCROLLBAR_HOV,
         )
         self._scroll.grid(row=1, column=0, sticky="nsew")
         self._scroll.grid_columnconfigure(0, weight=1)
@@ -113,8 +101,8 @@ class HistoryPanel(ctk.CTkFrame):
                 ctk.CTkLabel(
                     self._scroll,
                     text="No saved sessions yet",
-                    text_color=_SECTION_FG,
-                    font=ctk.CTkFont(size=11, slant="italic"),
+                    text_color=T.TEXT_TERTIARY,
+                    font=ctk.CTkFont(family=T.FONT_FAMILY, size=11, slant="italic"),
                 ).grid(row=row_idx, column=0, pady=20)
             # Schedule next refresh
             self.after(5000, self._refresh)
@@ -135,10 +123,10 @@ class HistoryPanel(ctk.CTkFrame):
             ctk.CTkLabel(
                 self._scroll,
                 text=group_label.upper(),
-                font=ctk.CTkFont(size=10, weight="bold"),
-                text_color=_SECTION_FG,
+                font=ctk.CTkFont(family=T.FONT_FAMILY, size=10, weight="bold"),
+                text_color=T.TEXT_TERTIARY,
                 anchor="w",
-            ).grid(row=row_idx, column=0, sticky="w", padx=10, pady=(8, 2))
+            ).grid(row=row_idx, column=0, sticky="w", padx=T.PAD_MD, pady=(T.PAD_SM, 2))
             row_idx += 1
 
             for path in group_files:
@@ -160,29 +148,39 @@ class HistoryPanel(ctk.CTkFrame):
 
     def _make_live_row(self, row_idx: int) -> None:
         frame = ctk.CTkFrame(
-            self._scroll, fg_color=("white", "#1C1022"),
-            corner_radius=6, border_width=1, border_color=("#FFCCCC", "#4A1A1A"),
+            self._scroll,
+            fg_color=T.DANGER_BG,
+            corner_radius=T.RADIUS_SM,
+            border_width=1,
+            border_color=T.DANGER,
         )
-        frame.grid(row=row_idx, column=0, sticky="ew", padx=8, pady=(6, 2))
+        frame.grid(
+            row=row_idx, column=0, sticky="ew", padx=T.PAD_SM, pady=(T.PAD_SM, 2)
+        )
         frame.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
-            frame, text="●",
-            text_color=_LIVE_COLOR,
+            frame,
+            text="●",
+            text_color=T.DANGER,
             font=ctk.CTkFont(size=10),
-        ).grid(row=0, column=0, padx=(10, 4), pady=8)
+        ).grid(row=0, column=0, padx=(T.PAD_MD, T.PAD_XS), pady=T.PAD_SM)
 
         ctk.CTkLabel(
-            frame, text="LIVE",
-            text_color=_LIVE_COLOR,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            frame,
+            text="LIVE",
+            text_color=T.DANGER,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=12, weight="bold"),
             anchor="w",
-        ).grid(row=0, column=1, sticky="w", pady=8)
+        ).grid(row=0, column=1, sticky="w", pady=T.PAD_SM)
 
     def _make_separator(self, row_idx: int) -> None:
         ctk.CTkFrame(
-            self._scroll, height=1, fg_color=("gray80", "#222230"), corner_radius=0
-        ).grid(row=row_idx, column=0, sticky="ew", padx=8, pady=2)
+            self._scroll,
+            height=1,
+            fg_color=T.BORDER_SUBTLE,
+            corner_radius=0,
+        ).grid(row=row_idx, column=0, sticky="ew", padx=T.PAD_SM, pady=2)
 
     def _make_file_row(self, row_idx: int, path: Path) -> ctk.CTkFrame:
         try:
@@ -192,12 +190,14 @@ class HistoryPanel(ctk.CTkFrame):
             time_str = path.stem[:8]
 
         is_selected = path == self._selected_path
-        bg = _ITEM_SEL if is_selected else _ITEM_BG
+        bg = T.ACCENT_SUBTLE if is_selected else T.BG_SURFACE
 
         frame = ctk.CTkFrame(
-            self._scroll, fg_color=bg, corner_radius=6,
+            self._scroll,
+            fg_color=bg,
+            corner_radius=T.RADIUS_SM,
         )
-        frame.grid(row=row_idx, column=0, sticky="ew", padx=8, pady=2)
+        frame.grid(row=row_idx, column=0, sticky="ew", padx=T.PAD_SM, pady=2)
         frame.grid_columnconfigure(0, weight=1)
 
         inner = ctk.CTkFrame(frame, fg_color="transparent")
@@ -205,23 +205,29 @@ class HistoryPanel(ctk.CTkFrame):
         inner.grid_columnconfigure(0, weight=1)
 
         time_lbl = ctk.CTkLabel(
-            inner, text=time_str,
-            font=ctk.CTkFont(size=13),
-            text_color=_TIME_COLOR,
+            inner,
+            text=time_str,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=13),
+            text_color=T.TEXT_PRIMARY,
             anchor="w",
         )
-        time_lbl.grid(row=0, column=0, sticky="w", padx=(10, 4), pady=6)
+        time_lbl.grid(
+            row=0, column=0, sticky="w", padx=(T.PAD_MD, T.PAD_XS), pady=T.PAD_SM
+        )
 
         del_btn = ctk.CTkButton(
-            inner, text="🗑",
-            width=28, height=22,
+            inner,
+            text="✕",
+            width=26,
+            height=22,
+            corner_radius=T.RADIUS_SM,
             fg_color="transparent",
-            hover_color=("gray80", "#2A2A3A"),
-            text_color=_DEL_COLOR,
+            hover_color=T.DANGER_BG,
+            text_color=T.TEXT_TERTIARY,
             font=ctk.CTkFont(size=12),
             command=lambda p=path: self._on_delete_click(p),
         )
-        del_btn.grid(row=0, column=1, padx=(0, 6), pady=4)
+        del_btn.grid(row=0, column=1, padx=(0, T.PAD_SM), pady=T.PAD_XS)
 
         # Click to select
         for widget in (frame, inner, time_lbl):
@@ -248,6 +254,7 @@ class HistoryPanel(ctk.CTkFrame):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _date_label(d: date) -> str:
     today = date.today()

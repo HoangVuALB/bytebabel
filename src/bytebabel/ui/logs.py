@@ -9,14 +9,15 @@ import sys
 import customtkinter as ctk
 
 from ..logger import LOG_FILE, ui_log_queue
+from . import theme as T
 
 # Level name → (light-mode colour, dark-mode colour)
 _TAG_COLORS: dict[str, tuple[str, str]] = {
-    "DEBUG":    ("#888888", "#666666"),
-    "INFO":     ("#111111", "#cccccc"),
-    "WARNING":  ("#b85c00", "#f0a500"),
-    "ERROR":    ("#cc0000", "#ff5555"),
-    "CRITICAL": ("#990000", "#ff2222"),
+    "DEBUG": ("#9CA3AF", "#4B5563"),
+    "INFO": ("#374151", "#D1D5DB"),
+    "WARNING": ("#D97706", "#FBBF24"),
+    "ERROR": ("#DC2626", "#F87171"),
+    "CRITICAL": ("#991B1B", "#FCA5A5"),
 }
 
 _FORMATTER = logging.Formatter(
@@ -42,16 +43,16 @@ class LogPanel(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
-        header = ctk.CTkFrame(self, height=28, fg_color=("gray80", "gray20"), corner_radius=0)
+        header = ctk.CTkFrame(self, height=32, fg_color=T.BG_ELEVATED, corner_radius=0)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
             header,
             text="LOGS",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("gray30", "gray70"),
-        ).grid(row=0, column=0, padx=(10, 6), pady=2)
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=11, weight="bold"),
+            text_color=T.TEXT_SECONDARY,
+        ).grid(row=0, column=0, padx=(T.PAD_MD, T.PAD_SM), pady=3)
 
         self._level_var = ctk.StringVar(value="DEBUG")
         ctk.CTkOptionMenu(
@@ -59,29 +60,47 @@ class LogPanel(ctk.CTkFrame):
             values=["DEBUG", "INFO", "WARNING", "ERROR"],
             variable=self._level_var,
             command=self._on_level_change,
-            width=95, height=22,
-            font=ctk.CTkFont(size=11),
-        ).grid(row=0, column=2, padx=4, pady=3)
+            width=95,
+            height=24,
+            corner_radius=T.RADIUS_SM,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=11),
+        ).grid(row=0, column=2, padx=T.PAD_XS, pady=3)
+
+        btn_kw = dict(
+            height=24,
+            corner_radius=T.RADIUS_SM,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=11),
+            fg_color="transparent",
+            hover_color=T.BORDER_SUBTLE,
+            text_color=T.TEXT_SECONDARY,
+        )
 
         ctk.CTkButton(
-            header, text="Clear", width=55, height=22,
-            font=ctk.CTkFont(size=11), command=self._clear,
-        ).grid(row=0, column=3, padx=4, pady=3)
+            header,
+            text="Clear",
+            width=55,
+            command=self._clear,
+            **btn_kw,  # type: ignore[arg-type]
+        ).grid(row=0, column=3, padx=T.PAD_XS, pady=3)
 
         ctk.CTkButton(
-            header, text="Open File", width=75, height=22,
-            font=ctk.CTkFont(size=11), command=self._open_file,
-        ).grid(row=0, column=4, padx=(0, 10), pady=3)
+            header,
+            text="Open File",
+            width=75,
+            command=self._open_file,
+            **btn_kw,  # type: ignore[arg-type]
+        ).grid(row=0, column=4, padx=(0, T.PAD_MD), pady=3)
 
         self._text = ctk.CTkTextbox(
             self,
-            font=ctk.CTkFont(
-                family="Menlo" if sys.platform == "darwin" else "Consolas", size=11
-            ),
+            font=ctk.CTkFont(family=T.FONT_MONO, size=11),
+            fg_color=T.BG_INSET,
             corner_radius=0,
             activate_scrollbars=True,
             state="disabled",
             wrap="none",
+            scrollbar_button_color=T.SCROLLBAR,
+            scrollbar_button_hover_color=T.SCROLLBAR_HOV,
         )
         self._text.grid(row=1, column=0, sticky="nsew")
 

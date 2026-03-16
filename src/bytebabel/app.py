@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 from .logger import get_logger
@@ -39,14 +40,18 @@ class App:
     ) -> None:
         log.info(
             "start_transcription: mode=%s device=%s language=%s translation=%s",
-            mode, device, language, translation_target,
+            mode,
+            device,
+            language,
+            translation_target,
         )
 
         api_key = settings.api_key
         if not api_key:
             self._window.post_update(
                 TranscriptUpdate(
-                    final_text="", non_final_text="",
+                    final_text="",
+                    non_final_text="",
                     error=(
                         "No Soniox API key configured.\n"
                         "Open Settings (⚙) and enter your API key."
@@ -59,16 +64,22 @@ class App:
             status = check_microphone_permission()
             if status == PermissionStatus.DENIED:
                 self._window.post_update(
-                    TranscriptUpdate(final_text="", non_final_text="",
-                                     error=get_permission_instructions(status))
+                    TranscriptUpdate(
+                        final_text="",
+                        non_final_text="",
+                        error=get_permission_instructions(status),
+                    )
                 )
                 return
             elif status == PermissionStatus.NOT_DETERMINED:
                 status = request_microphone_permission()
                 if status == PermissionStatus.DENIED:
                     self._window.post_update(
-                        TranscriptUpdate(final_text="", non_final_text="",
-                                         error=get_permission_instructions(status))
+                        TranscriptUpdate(
+                            final_text="",
+                            non_final_text="",
+                            error=get_permission_instructions(status),
+                        )
                     )
                     return
 
@@ -82,9 +93,7 @@ class App:
             else:
                 self._capture = SystemAudioCapture(
                     device_index=device_index,
-                    on_error=lambda err: self._window.post_update(
-                        TranscriptUpdate(final_text="", non_final_text="", error=err)
-                    ),
+                    on_error=self._on_capture_error,
                     on_ready=self._on_capture_ready,
                 )
         except NoLoopbackDeviceError as exc:
@@ -113,11 +122,26 @@ class App:
             log.info("System audio ready — starting Soniox transcriber")
             self._transcriber.start(self._capture.get_stream())
 
+    def _on_capture_error(self, err: str) -> None:
+        """Called from capture thread when system audio dies."""
+        log.error("Capture error — stopping transcriber: %s", err)
+        self.stop_transcription()
+        self._window.post_update(
+            TranscriptUpdate(final_text="", non_final_text="", error=err)
+        )
+
     def stop_transcription(self) -> None:
         log.info("Stopping transcription")
-        if self._transcriber is not None:
-            self._transcriber.stop()
-            self._transcriber = None
-        if self._capture is not None:
-            self._capture.stop()
-            self._capture = None
+        # Stop in background to avoid blocking the UI thread
+        transcriber = self._transcriber
+        capture = self._capture
+        self._transcriber = None
+        self._capture = None
+
+        def _shutdown() -> None:
+            if transcriber is not None:
+                transcriber.stop()
+            if capture is not None:
+                capture.stop()
+
+        threading.Thread(target=_shutdown, daemon=True, name="stop-worker").start()

@@ -98,10 +98,12 @@ class SystemAudioCapture(AudioCapture):
                 return
             if attempt > 0:
                 import time
+
                 delay = 2.0 + attempt  # 3s, 4s, 5s
                 log.info(
                     "Retrying system audio capture in %.0fs (attempt %d/4)…",
-                    delay, attempt + 1,
+                    delay,
+                    attempt + 1,
                 )
                 time.sleep(delay)
 
@@ -142,12 +144,9 @@ class SystemAudioCapture(AudioCapture):
 
             stderr_text = "\n".join(stderr_lines)
             needs_permission = "SCREEN_RECORDING_PERMISSION_NEEDED" in stderr_text
-            is_transient = (
-                not needs_permission
-                and (
-                    "connection being interrupted" in stderr_text
-                    or "application connection" in stderr_text
-                )
+            is_transient = not needs_permission and (
+                "connection being interrupted" in stderr_text
+                or "application connection" in stderr_text
             )
 
             if not ready:
@@ -155,7 +154,8 @@ class SystemAudioCapture(AudioCapture):
                 proc.wait()
                 log.warning(
                     "System audio helper did not start (attempt %d): %s",
-                    attempt + 1, stderr_text,
+                    attempt + 1,
+                    stderr_text,
                 )
                 if is_transient:
                     continue
@@ -211,15 +211,42 @@ class SystemAudioCapture(AudioCapture):
                 data = proc.stdout.read(_MACOS_CHUNK_BYTES)
                 if not data:
                     if not self._stop_event.is_set():
-                        log.error("System audio helper exited unexpectedly")
-                        self._queue.put(None)
-                        if self._on_error:
-                            self._on_error("System audio stopped unexpectedly. Try again.")
+                        log.warning("System audio helper exited — restarting…")
+                        # Clean up old process
+                        self._proc = None
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            pass
+                        try:
+                            proc.wait(timeout=2)
+                        except Exception:
+                            pass
+                        # Restart the helper
+                        import time
+
+                        time.sleep(1)
+                        proc = self._respawn_helper()
+                        if proc is None:
+                            self._queue.put(None)
+                            if self._on_error:
+                                self._on_error(
+                                    "System audio stopped and could not restart."
+                                )
+                            return
+                        self._proc = proc
+                        chunks_logged = 0
+                        continue
                     break
                 if chunks_logged < 10:
                     samples = np.frombuffer(data, dtype=np.int16)
                     peak = int(np.max(np.abs(samples)))
-                    log.debug("PCM chunk %d: %d bytes, peak=%d", chunks_logged + 1, len(data), peak)
+                    log.debug(
+                        "PCM chunk %d: %d bytes, peak=%d",
+                        chunks_logged + 1,
+                        len(data),
+                        peak,
+                    )
                     chunks_logged += 1
                 if not self._stop_event.is_set():
                     try:
@@ -238,12 +265,67 @@ class SystemAudioCapture(AudioCapture):
             except subprocess.TimeoutExpired:
                 proc.kill()
 
+    # ── Helper respawn ─────────────────────────────────────────────────────
+
+    def _respawn_helper(self) -> subprocess.Popen | None:
+        """Try to respawn the Swift helper. Returns the new process or None."""
+        import time
+
+        for attempt in range(3):
+            if self._stop_event.is_set():
+                return None
+            if attempt > 0:
+                time.sleep(2)
+
+            log.info("Respawning system audio helper (attempt %d/3)…", attempt + 1)
+            try:
+                proc = subprocess.Popen(
+                    [str(HELPER_PATH)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=0,
+                )
+            except OSError as exc:
+                log.error("Failed to respawn helper: %s", exc)
+                return None
+
+            # Wait for READY
+            ready = False
+            try:
+                while True:
+                    line = proc.stderr.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", errors="replace").strip()
+                    log.debug("helper stderr: %s", text)
+                    if text == "READY":
+                        ready = True
+                        break
+            except Exception:
+                pass
+
+            if ready:
+                log.info("System audio helper respawned successfully")
+                return proc
+
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                proc.kill()
+
+        log.error("Helper respawn failed after 3 attempts")
+        return None
+
     # ── sounddevice path (Linux) ──────────────────────────────────────────
 
     def _capture_sounddevice(self) -> None:
         import sounddevice as sd
 
-        log.info("SystemAudioCapture: opening sounddevice stream (device=%s)", self._device_index)
+        log.info(
+            "SystemAudioCapture: opening sounddevice stream (device=%s)",
+            self._device_index,
+        )
         try:
             with sd.RawInputStream(
                 samplerate=SAMPLE_RATE,
@@ -264,7 +346,9 @@ class SystemAudioCapture(AudioCapture):
             self._queue.put(None)
             raise
 
-    def _sd_callback(self, indata: bytes, frames: int, time_info: object, status: object) -> None:
+    def _sd_callback(
+        self, indata: bytes, frames: int, time_info: object, status: object
+    ) -> None:
         if not self._stop_event.is_set():
             try:
                 self._queue.put_nowait(bytes(indata))

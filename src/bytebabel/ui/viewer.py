@@ -1,44 +1,25 @@
-"""TranscriptView — scrollable sentence bubble cards with original + translation."""
+"""TranscriptView — vertical layout: completed text on top, live text below."""
 
 from __future__ import annotations
 
-import re
-
 import customtkinter as ctk
 
-# ── Palette ───────────────────────────────────────────────────────────────────
-_ORIG_COLOR  = "#5B9BD5"   # muted blue — original text
-_TRANS_COLOR = "#56C26E"   # fresh green — translation
-_PANEL_BG    = ("#F0F0F4", "#0E0E16")
-_CARD_BG     = ("#FFFFFF",  "#1A1A24")
-_CARD_BDR    = ("#E2E2E8",  "#2A2A38")
-_DIV_COLOR   = ("#D8D8E0",  "#252530")
-_LIVE_BG     = ("#F6F6FA",  "#111120")
-_LIVE_TEXT   = ("#AAAAAA",  "#55556A")
-_PLACEHOLDER = ("#BBBBBB",  "#444455")
+from . import theme as T
 
 
 class TranscriptView(ctk.CTkFrame):
-    """
-    Single-column scrollable panel.
-    Each finalized sentence is shown as a card:
-      original text (blue)
-      ─── divider ───
-      translation (green)   ← only if translation is present
-    """
+    """Vertical transcript viewer with finalized pane + live pane."""
 
     def __init__(self, master: ctk.CTkBaseClass, **kwargs: object) -> None:
-        kwargs.setdefault("fg_color", _PANEL_BG)
-        super().__init__(master, corner_radius=12, **kwargs)
+        kwargs.setdefault("fg_color", T.BG_ROOT)
+        super().__init__(master, corner_radius=0, **kwargs)
 
-        self._sentences: list[str]      = []
-        self._translations: list[str]   = []
-        self._cards: list[ctk.CTkFrame] = []
-        self._live_frame: ctk.CTkFrame | None = None
-        self._live_orig_lbl:  ctk.CTkLabel | None = None
-        self._live_trans_lbl: ctk.CTkLabel | None = None
-        self._placeholder: ctk.CTkLabel | None = None
         self._is_live_mode = True
+        self._last_final_orig = ""
+        self._last_final_trans = ""
+        self._last_live_orig = ""
+        self._last_live_trans = ""
+        self._segments_cache: list[tuple[str, str]] = []
 
         self._build_ui()
         self.show_placeholder()
@@ -46,55 +27,177 @@ class TranscriptView(ctk.CTkFrame):
     # ── Build ─────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
-        self._scroll = ctk.CTkScrollableFrame(
+        self.grid_rowconfigure(0, weight=4)
+        self.grid_rowconfigure(1, weight=0)
+        self.grid_rowconfigure(2, weight=1)
+
+        # ── Completed pane ────────────────────────────────────────────────
+        completed = ctk.CTkFrame(
             self,
-            fg_color="transparent",
-            scrollbar_button_color=("gray70", "#2A2A3A"),
-            scrollbar_button_hover_color=("gray55", "#3A3A52"),
+            fg_color=T.BG_SURFACE,
+            corner_radius=T.RADIUS_MD,
+            border_width=1,
+            border_color=T.BORDER_SUBTLE,
         )
-        self._scroll.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
-        self._scroll.grid_columnconfigure(0, weight=1)
-        self._scroll.bind("<Configure>", self._on_resize)
+        completed.grid(
+            row=0, column=0, sticky="nsew", padx=T.PAD_SM, pady=(T.PAD_SM, 3)
+        )
+        completed.grid_rowconfigure(1, weight=1)
+        completed.grid_columnconfigure(0, weight=1)
+        self._completed_pane = completed
+
+        # Header
+        hdr = ctk.CTkFrame(
+            completed, fg_color=T.BG_ELEVATED, corner_radius=T.RADIUS_SM, height=32
+        )
+        hdr.grid(row=0, column=0, sticky="ew", padx=T.PAD_SM, pady=(T.PAD_SM, 0))
+        hdr.grid_columnconfigure(0, weight=1)
+        hdr.grid_propagate(False)
+        hdr.grid_rowconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            hdr,
+            text="TRANSCRIPT",
+            height=28,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=11, weight="bold"),
+            text_color=T.TEXT_SECONDARY,
+            fg_color="transparent",
+        ).grid(row=0, column=0, sticky="w", padx=T.PAD_MD)
+
+        self._copy_trans_btn = ctk.CTkButton(
+            hdr,
+            text="Copy Translation",
+            width=110,
+            height=24,
+            corner_radius=T.RADIUS_SM,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=11),
+            fg_color="transparent",
+            hover_color=T.BORDER_MUTED,
+            text_color=T.TEXT_TERTIARY,
+            command=self._copy_translation,
+        )
+        self._copy_trans_btn.grid(row=0, column=1, padx=(0, 2))
+
+        self._copy_orig_btn = ctk.CTkButton(
+            hdr,
+            text="Copy Original",
+            width=100,
+            height=24,
+            corner_radius=T.RADIUS_SM,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=11),
+            fg_color="transparent",
+            hover_color=T.BORDER_MUTED,
+            text_color=T.TEXT_TERTIARY,
+            command=self._copy_transcript,
+        )
+        self._copy_orig_btn.grid(row=0, column=2, padx=(0, T.PAD_XS))
+
+        self._completed_text = ctk.CTkTextbox(
+            completed,
+            fg_color="transparent",
+            wrap="word",
+            activate_scrollbars=True,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=15),
+            text_color=T.ORIG_TEXT,
+            scrollbar_button_color=T.SCROLLBAR,
+            scrollbar_button_hover_color=T.SCROLLBAR_HOV,
+        )
+        self._completed_text.grid(
+            row=1, column=0, sticky="nsew", padx=T.PAD_SM, pady=(T.PAD_XS, T.PAD_SM)
+        )
+        self._completed_text.configure(state="disabled")
+
+        # ── Divider ──────────────────────────────────────────────────────
+        ctk.CTkFrame(self, height=1, fg_color=T.BORDER_SUBTLE, corner_radius=0).grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=T.PAD_LG,
+        )
+
+        # ── Live pane ─────────────────────────────────────────────────────
+        live = ctk.CTkFrame(
+            self,
+            fg_color=T.BG_INSET,
+            corner_radius=T.RADIUS_MD,
+            border_width=1,
+            border_color=T.BORDER_SUBTLE,
+        )
+        live.grid(row=2, column=0, sticky="nsew", padx=T.PAD_SM, pady=(3, T.PAD_SM))
+        live.grid_rowconfigure(1, weight=1)
+        live.grid_columnconfigure(0, weight=1)
+        self._live_pane = live
+
+        self._live_dot = ctk.CTkLabel(
+            live,
+            text="● LIVE",
+            height=20,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=11, weight="bold"),
+            text_color=T.DANGER,
+            fg_color="transparent",
+        )
+        self._live_dot.grid(
+            row=0, column=0, sticky="w", padx=T.PAD_MD, pady=(T.PAD_SM, 0)
+        )
+
+        self._live_text = ctk.CTkTextbox(
+            live,
+            fg_color="transparent",
+            wrap="word",
+            activate_scrollbars=False,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=15),
+            text_color=T.LIVE_ORIG,
+        )
+        self._live_text.grid(
+            row=1, column=0, sticky="nsew", padx=T.PAD_SM, pady=(0, T.PAD_SM)
+        )
+        self._live_text.configure(state="disabled")
+
+        # ── Placeholder ──────────────────────────────────────────────────
+        self._placeholder = ctk.CTkLabel(
+            self,
+            text="Press Start to begin transcribing",
+            text_color=T.TEXT_TERTIARY,
+            font=ctk.CTkFont(family=T.FONT_FAMILY, size=15, slant="italic"),
+        )
 
     # ── Public API ────────────────────────────────────────────────────────
 
     def show_placeholder(self) -> None:
-        """Display empty-state hint."""
-        self._clear_cards()
-        if self._placeholder is None:
-            self._placeholder = ctk.CTkLabel(
-                self._scroll,
-                text="Press ▶ Start to begin recording",
-                text_color=_PLACEHOLDER,
-                font=ctk.CTkFont(family="Helvetica Neue", size=15, slant="italic"),
-            )
-        self._placeholder.grid(row=0, column=0, pady=60)
+        self._clear_all()
+        self._completed_pane.grid_remove()
+        self._live_pane.grid_remove()
+        self._placeholder.place(relx=0.5, rely=0.45, anchor="center")
 
     def set_live_mode(self) -> None:
-        """Switch to live capture mode and clear all cards."""
         self._is_live_mode = True
-        self._clear_cards()
-        if self._placeholder:
-            self._placeholder.grid_forget()
+        self._clear_all()
+        self._placeholder.place_forget()
+        self.grid_rowconfigure(0, weight=4)
+        self.grid_rowconfigure(2, weight=1)
+        self._completed_pane.grid(
+            row=0, column=0, sticky="nsew", padx=T.PAD_SM, pady=(T.PAD_SM, 3)
+        )
+        self._live_pane.grid(
+            row=2, column=0, sticky="nsew", padx=T.PAD_SM, pady=(3, T.PAD_SM)
+        )
 
     def show_file(self, original: str, translation: str) -> None:
-        """Display a saved transcript file (read-only)."""
+        """Show a saved transcript file (no live pane needed)."""
         self._is_live_mode = False
-        self._clear_cards()
-        if self._placeholder:
-            self._placeholder.grid_forget()
+        self._placeholder.place_forget()
+        self._completed_pane.grid(
+            row=0, column=0, sticky="nsew", padx=T.PAD_SM, pady=(T.PAD_SM, 3)
+        )
+        self._live_pane.grid_remove()
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=0)
 
-        orig_sents  = _split_sentences(original)
-        trans_sents = _split_sentences(translation)
-        wrap = self._wrap_width()
-        for i, orig in enumerate(orig_sents):
-            trans = trans_sents[i] if i < len(trans_sents) else ""
-            self._sentences.append(orig)
-            self._translations.append(trans)
-            self._cards.append(self._make_card(len(self._cards), orig, trans, wrap))
-        self.after_idle(self._scroll_bottom)
+        content = original.strip()
+        if translation.strip():
+            content += f"\n\n── Translation ──\n{translation.strip()}"
+        self._set_text(self._completed_text, content)
 
     def update_transcript(
         self,
@@ -102,174 +205,122 @@ class TranscriptView(ctk.CTkFrame):
         non_final_text: str,
         translated_final_text: str = "",
         translated_non_final_text: str = "",
+        segments: list[tuple[str, str]] | None = None,
     ) -> None:
-        """Update live transcript — reconcile cards, show live preview."""
         if not self._is_live_mode:
             self.set_live_mode()
-        if self._placeholder:
-            self._placeholder.grid_forget()
 
-        new_sents  = _split_sentences(final_text)
-        new_trans  = _split_sentences(translated_final_text)
-        wrap = self._wrap_width()
+        self._placeholder.place_forget()
 
-        for i, sent in enumerate(new_sents):
-            trans = new_trans[i] if i < len(new_trans) else ""
-            if i < len(self._sentences):
-                if self._sentences[i] != sent or self._translations[i] != trans:
-                    self._sentences[i]    = sent
-                    self._translations[i] = trans
-                    self._update_card(self._cards[i], sent, trans, wrap)
-            else:
-                self._sentences.append(sent)
-                self._translations.append(trans)
-                self._cards.append(self._make_card(len(self._cards), sent, trans, wrap))
+        # ── Completed pane: sentence-by-sentence pairing ──────────────────
+        if segments:
+            if segments != self._segments_cache:
+                self._segments_cache = list(segments)
+                self._last_final_orig = "\n".join(
+                    s[0] for s in segments if s[0].strip()
+                )
+                self._last_final_trans = "\n".join(
+                    s[1] for s in segments if s[1].strip()
+                )
+                self._render_segments(segments)
+        else:
+            # Fallback for no-translation or pre-segment state
+            final_orig = final_text.strip()
+            final_trans = translated_final_text.strip()
+            completed = final_orig
+            if final_trans:
+                completed += f"\n\n── Translation ──\n{final_trans}"
+            if completed != self._last_final_orig + self._last_final_trans:
+                self._last_final_orig = final_orig
+                self._last_final_trans = final_trans
+                self._set_text(self._completed_text, completed, auto_scroll=True)
 
-        # Live preview card
-        live_orig  = non_final_text.strip()
+        # ── Live pane: current recognition ────────────────────────────────
+        live_orig = non_final_text.strip()
         live_trans = translated_non_final_text.strip()
-        if live_orig or live_trans:
-            self._ensure_live()
-            row = len(self._cards)
-            if self._live_orig_lbl:
-                self._live_orig_lbl.configure(text=live_orig or "", wraplength=wrap)
-            if self._live_trans_lbl:
-                self._live_trans_lbl.configure(text=live_trans or "", wraplength=wrap)
-            self._live_frame.grid(row=row, column=0, sticky="ew", padx=10, pady=(0, 10))
-        elif self._live_frame:
-            self._live_frame.grid_forget()
+        live = live_orig
+        if live_trans:
+            live += f"\n{live_trans}"
 
-        self.after_idle(self._scroll_bottom)
+        if live != self._last_live_orig + self._last_live_trans:
+            self._last_live_orig = live_orig
+            self._last_live_trans = live_trans
+            self._set_text(self._live_text, live)
 
     def clear(self) -> None:
-        self._clear_cards()
+        self._clear_all()
         self.show_placeholder()
 
-    # ── Card construction ─────────────────────────────────────────────────
+    # ── Segment rendering ──────────────────────────────────────
 
-    def _make_card(self, idx: int, orig: str, trans: str, wrap: int) -> ctk.CTkFrame:
-        frame = ctk.CTkFrame(
-            self._scroll,
-            fg_color=_CARD_BG,
-            corner_radius=10,
-            border_width=1,
-            border_color=_CARD_BDR,
+    def _render_segments(self, segments: list[tuple[str, str]]) -> None:
+        """Render (orig, trans) pairs with color tags in the completed textbox."""
+        tb = self._completed_text
+        inner = tb._textbox  # underlying tk.Text widget
+
+        mode = ctk.get_appearance_mode()
+        idx = 0 if mode == "Light" else 1
+
+        inner.tag_configure("orig", foreground=T.ORIG_TEXT[idx])
+        inner.tag_configure(
+            "trans",
+            foreground=T.TRANS_TEXT[idx],
+            font=(T.FONT_FAMILY, 13, "italic"),
         )
-        frame.grid(row=idx, column=0, sticky="ew", padx=10, pady=(0, 6))
-        frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            frame, text=orig,
-            anchor="w", justify="left",
-            wraplength=wrap,
-            text_color=_ORIG_COLOR,
-            font=ctk.CTkFont(family="Helvetica Neue", size=15),
-        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 6))
+        tb.configure(state="normal")
+        tb.delete("1.0", "end")
 
-        if trans:
-            ctk.CTkFrame(
-                frame, height=1,
-                fg_color=_DIV_COLOR,
-                corner_radius=0,
-            ).grid(row=1, column=0, sticky="ew", padx=14, pady=0)
-            ctk.CTkLabel(
-                frame, text=trans,
-                anchor="w", justify="left",
-                wraplength=wrap,
-                text_color=_TRANS_COLOR,
-                font=ctk.CTkFont(family="Helvetica Neue", size=14),
-            ).grid(row=2, column=0, sticky="ew", padx=14, pady=(6, 10))
-        else:
-            # Adjust bottom padding on original label when no translation
-            for widget in frame.grid_slaves(row=0):
-                widget.grid_configure(pady=(10, 10))
+        for i, (orig, trans) in enumerate(segments):
+            if i > 0:
+                inner.insert("end", "\n")
+            if orig.strip():
+                inner.insert("end", orig.strip() + "\n", "orig")
+            if trans.strip():
+                inner.insert("end", trans.strip() + "\n", "trans")
 
-        return frame
+        inner.see("end")
+        tb.configure(state="disabled")
 
-    def _update_card(self, frame: ctk.CTkFrame, orig: str, trans: str, wrap: int) -> None:
-        """Destroy and recreate card content in-place (simpler than tracking sub-widgets)."""
-        idx = frame.grid_info()["row"]
-        frame.destroy()
-        new_frame = self._make_card(idx, orig, trans, wrap)
-        self._cards[idx] = new_frame
+    # ── Copy to clipboard ─────────────────────────────────────────────────
 
-    def _ensure_live(self) -> None:
-        if self._live_frame is not None:
-            return
-        self._live_frame = ctk.CTkFrame(
-            self._scroll,
-            fg_color=_LIVE_BG,
-            corner_radius=10,
-            border_width=1,
-            border_color=_CARD_BDR,
-        )
-        self._live_frame.grid_columnconfigure(1, weight=1)
+    def _copy_transcript(self) -> None:
+        text = self._last_final_orig
+        if text:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._flash_btn(self._copy_orig_btn, "✓ Copied!")
 
-        ctk.CTkLabel(
-            self._live_frame, text="▸",
-            text_color=_ORIG_COLOR,
-            font=ctk.CTkFont(size=12), width=16,
-        ).grid(row=0, column=0, sticky="nw", padx=(12, 2), pady=10)
+    def _copy_translation(self) -> None:
+        text = self._last_final_trans
+        if text:
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._flash_btn(self._copy_trans_btn, "✓ Copied!")
 
-        self._live_orig_lbl = ctk.CTkLabel(
-            self._live_frame, text="",
-            anchor="w", justify="left",
-            wraplength=600,
-            text_color=_LIVE_TEXT,
-            font=ctk.CTkFont(family="Helvetica Neue", size=14, slant="italic"),
-        )
-        self._live_orig_lbl.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=(10, 4))
+    def _flash_btn(self, btn: ctk.CTkButton, msg: str) -> None:
+        original = btn.cget("text")
+        btn.configure(text=msg)
+        self.after(1200, lambda: btn.configure(text=original))
 
-        self._live_trans_lbl = ctk.CTkLabel(
-            self._live_frame, text="",
-            anchor="w", justify="left",
-            wraplength=600,
-            text_color=_LIVE_TEXT,
-            font=ctk.CTkFont(family="Helvetica Neue", size=13, slant="italic"),
-        )
-        self._live_trans_lbl.grid(row=1, column=1, sticky="ew", padx=(0, 14), pady=(0, 10))
+    # ── Text helpers ──────────────────────────────────────────────────────
 
-    # ── Internal helpers ──────────────────────────────────────────────────
+    def _set_text(
+        self, textbox: ctk.CTkTextbox, content: str, auto_scroll: bool = False
+    ) -> None:
+        textbox.configure(state="normal")
+        textbox.delete("1.0", "end")
+        if content:
+            textbox.insert("1.0", content)
+        if auto_scroll:
+            textbox.see("end")
+        textbox.configure(state="disabled")
 
-    def _clear_cards(self) -> None:
-        self._sentences.clear()
-        self._translations.clear()
-        for frame in self._cards:
-            frame.destroy()
-        self._cards.clear()
-        if self._live_frame:
-            self._live_frame.destroy()
-            self._live_frame = None
-            self._live_orig_lbl  = None
-            self._live_trans_lbl = None
-
-    def _scroll_bottom(self) -> None:
-        try:
-            self._scroll._parent_canvas.yview_moveto(1.0)
-        except Exception:
-            pass
-
-    def _wrap_width(self) -> int:
-        w = self._scroll.winfo_width()
-        return max(160, w - 80) if w > 140 else 500
-
-    def _on_resize(self, _: object) -> None:
-        wrap = self._wrap_width()
-        for frame in self._cards:
-            for widget in frame.winfo_children():
-                if isinstance(widget, ctk.CTkLabel):
-                    widget.configure(wraplength=wrap)
-        if self._live_orig_lbl:
-            self._live_orig_lbl.configure(wraplength=wrap)
-        if self._live_trans_lbl:
-            self._live_trans_lbl.configure(wraplength=wrap)
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _split_sentences(text: str) -> list[str]:
-    """Split cumulative transcript text into individual sentences."""
-    if not text or not text.strip():
-        return []
-    parts = re.split(r"(?<=[.!?…。！？])\s*", text.strip())
-    return [p.strip() for p in parts if p.strip()]
+    def _clear_all(self) -> None:
+        self._last_final_orig = ""
+        self._last_final_trans = ""
+        self._last_live_orig = ""
+        self._last_live_trans = ""
+        self._segments_cache = []
+        self._set_text(self._completed_text, "")
+        self._set_text(self._live_text, "")
